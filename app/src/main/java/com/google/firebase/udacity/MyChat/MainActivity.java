@@ -15,6 +15,8 @@
  */
 package com.google.firebase.udacity.MyChat;
 
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
@@ -33,6 +35,7 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.firebase.ui.auth.AuthUI;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.ChildEventListener;
@@ -40,6 +43,9 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -50,10 +56,13 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     FirebaseDatabase firebaseDatabase;
     DatabaseReference dbrefrence;
+    FirebaseStorage firebaseStorage;
+    StorageReference storageReference;
 
 
     public static final String ANONYMOUS = "anonymous";
     public static final int DEFAULT_MSG_LENGTH_LIMIT = 1000;
+    private static final int RC_PHOTO_PICKER =  2;
 
     private ListView mMessageListView;
     private MessageAdapter mMessageAdapter;
@@ -82,6 +91,8 @@ private FirebaseAuth mFirebaseAuth;
 
         mUsername = ANONYMOUS;
         mFirebaseAuth=FirebaseAuth.getInstance();
+        firebaseStorage=FirebaseStorage.getInstance();
+        storageReference=firebaseStorage.getReference().child("chat_photos");
 
 
         // Initialize references to views
@@ -103,10 +114,12 @@ private FirebaseAuth mFirebaseAuth;
         mPhotoPickerButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // TODO: Fire an intent to show an image picker
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/jpeg");
+                intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+                startActivityForResult(Intent.createChooser(intent, "Complete action using"), RC_PHOTO_PICKER);
             }
         });
-
         // Enable Send button when there's text to send
         mMessageEditText.addTextChangedListener(new TextWatcher() {
             @Override
@@ -134,56 +147,34 @@ private FirebaseAuth mFirebaseAuth;
             public void onClick(View view) {
                 // TODO: Send messages on click
                 FriendlyMessage friendlyMessage=new FriendlyMessage(mMessageEditText.getText().toString(),mUsername,null);
-
+//putting the value in databse we use setValue if you want to insert it as different child ,use push()
                dbrefrence.push().setValue(friendlyMessage);
                 // Clear input box
                 mMessageEditText.setText("");
             }
         });
-        childEventListener=new ChildEventListener() {
-            @Override
-            public void onChildAdded(DataSnapshot dataSnapshot, String s) {
-             FriendlyMessage fm=dataSnapshot.getValue(FriendlyMessage.class);
-            mMessageAdapter.add(fm);
-            }
 
-            @Override
-            public void onChildChanged(DataSnapshot dataSnapshot, String s) {
 
-            }
-
-            @Override
-            public void onChildRemoved(DataSnapshot dataSnapshot) {
-
-            }
-
-            @Override
-            public void onChildMoved(DataSnapshot dataSnapshot, String s) {
-
-            }
-
-            @Override
-            public void onCancelled(DatabaseError databaseError) {
-
-            }
-        };
-        dbrefrence.addChildEventListener(childEventListener);
         mauthstatelistener=new FirebaseAuth.AuthStateListener() {
             @Override
             public void onAuthStateChanged(@NonNull FirebaseAuth firebaseAuth) {
                 FirebaseUser user=FirebaseAuth.getInstance().getCurrentUser();
                 if(user!=null)
                 {
+                    onSignedInInitilaize(user.getDisplayName());
                     Toast.makeText(MainActivity.this,"Welcome to firebase Chat!",Toast.LENGTH_LONG).show();
 
                 }
                 else
                 {
+                    onSignedout();
+                    //FirebaseUi auth for sign in flow (given by firebase)
                     startActivityForResult(
                             AuthUI.getInstance()
                                     .createSignInIntentBuilder()
-                                    .setIsSmartLockEnabled(false).setAvailableProviders( Arrays.asList(new AuthUI.IdpConfig.Builder(AuthUI.EMAIL_PROVIDER).build(),new AuthUI.IdpConfig.Builder(AuthUI.GOOGLE_PROVIDER).build() ))
+                                    .setIsSmartLockEnabled(false).setAvailableProviders(Arrays.asList(new AuthUI.IdpConfig.Builder(AuthUI.EMAIL_PROVIDER).build(),
 
+                                    new AuthUI.IdpConfig.Builder(AuthUI.GOOGLE_PROVIDER).build()) )
                                     .build(),
                             RC_SIGN_IN);
 
@@ -192,6 +183,93 @@ private FirebaseAuth mFirebaseAuth;
             }
         };
     }
+
+    private void onSignedInInitilaize(String displayName) {
+         mUsername=displayName;
+        attachListener();
+
+    }
+
+    private void attachListener() {
+        if (childEventListener == null) {
+            childEventListener = new ChildEventListener() {
+                @Override
+                public void onChildAdded(DataSnapshot dataSnapshot, String s) {
+                    //data is added in db as a child ;this func will be executed;and to get the value from db dataSnapshot.getValue
+                    FriendlyMessage fm = dataSnapshot.getValue(FriendlyMessage.class);
+                    mMessageAdapter.add(fm);
+                }
+
+                @Override
+                public void onChildChanged(DataSnapshot dataSnapshot, String s) {
+
+                }
+
+                @Override
+                public void onChildRemoved(DataSnapshot dataSnapshot) {
+
+                }
+
+                @Override
+                public void onChildMoved(DataSnapshot dataSnapshot, String s) {
+
+                }
+
+                @Override
+                public void onCancelled(DatabaseError databaseError) {
+
+                }
+            };
+            dbrefrence.addChildEventListener(childEventListener);
+        }
+    }
+
+    private void  onSignedout()
+    {
+        mUsername=ANONYMOUS;
+        mMessageAdapter.clear();
+        detatchListener();
+
+    }
+
+    private void detatchListener() {
+        if(childEventListener!=null)
+        {
+            dbrefrence.removeEventListener(childEventListener);
+            childEventListener=null;
+        }
+    }
+    @Override
+    public void onActivityResult(int requestcode,int resultcode,Intent data)
+    {
+        super.onActivityResult(requestcode,resultcode,data);
+        if(requestcode==RC_SIGN_IN) {
+            if (resultcode == RESULT_OK) {
+                Toast.makeText(this, "Signed in!", Toast.LENGTH_SHORT).show();
+            } else if (resultcode == RESULT_CANCELED) {
+                Toast.makeText(this, "Signed in cancelled!", Toast.LENGTH_SHORT).show();
+                finish();
+            }
+        }else if (requestcode == RC_PHOTO_PICKER && resultcode == RESULT_OK) {
+
+                Uri photo = data.getData();
+                StorageReference photoRef = storageReference.child(photo.getLastPathSegment());
+            //storing photo in  firebase storage
+                photoRef.putFile(photo).addOnSuccessListener(this, new OnSuccessListener<UploadTask.TaskSnapshot>() {
+                    @Override
+                    public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
+                        Uri downloadUrl = taskSnapshot.getDownloadUrl();
+                        FriendlyMessage fms = new FriendlyMessage(null, mUsername, downloadUrl.toString());
+//storing the link of photo(uri) in db
+                        dbrefrence.push().setValue(fms);
+                    }
+                });
+
+            }
+        }
+
+
+
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -202,13 +280,24 @@ private FirebaseAuth mFirebaseAuth;
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return super.onOptionsItemSelected(item);
+        switch (item.getItemId()) {
+            case R.id.sign_out_menu:
+                AuthUI.getInstance().signOut(this);
+                return true;
+            default:
+            return super.onOptionsItemSelected(item);
+        }
     }
     @Override
     protected void onPause()
     {
         super.onPause();
-        mFirebaseAuth.removeAuthStateListener(mauthstatelistener);
+        if(mauthstatelistener!=null) {
+            mFirebaseAuth.removeAuthStateListener(mauthstatelistener);
+        }
+        detatchListener();
+        mMessageAdapter.clear();
+
 
     }
 }
